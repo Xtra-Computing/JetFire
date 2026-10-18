@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jetfire-attention"
+version = "0.1.0"
+description = "JetFire low-bit dense attention with high-precision CPU correction"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+license = {file = "LICENSE"}
+dynamic = ["dependencies"]
+
+[project.optional-dependencies]
+dev = ["pytest==9.0.3", "build>=1.2"]
+plots = ["matplotlib>=3.8,<4"]
+
+[project.scripts]
+jetfire-artifact = "jetfire_vllm.artifact:main"
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools.packages.find]
+include = ["jetfire_vllm*"]
+
+[tool.setuptools.package-data]
+jetfire_vllm = ["csrc/*.cu", "csrc/*.cpp", "csrc/*.h", "bench/*.sh", "bench/presets/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

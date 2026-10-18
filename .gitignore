@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+*.so
+*.o
+*.log
+.pytest_cache/
+.mypy_cache/
+
+# Generated benchmark/accuracy outputs are not release inputs.
+jetfire_vllm/bench/experiments/accuracy_*/
+jetfire_vllm/bench/experiments/logs/
+jetfire_vllm/bench/experiments/rollback_backup_*/
+jetfire_vllm/bench/experiments/qwen3_30b_int2_4level_*/
+
+.cache/
+results/
+data/
+models/
+build/
+dist/
+*.egg-info/

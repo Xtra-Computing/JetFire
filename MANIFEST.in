@@ -1,0 +1,13 @@
+include .gitignore LICENSE README.md THIRD_PARTY_NOTICES.md requirements.txt
+recursive-include jetfire_vllm/csrc *.cu *.cpp *.h
+recursive-include jetfire_vllm/bench *.sh *.json
+recursive-include scripts *.py *.sh
+recursive-include tests *.py
+recursive-include docs *.md
+include env/constraints-py311-cu128.txt
+prune docs/validation
+prune results
+prune models
+prune data
+prune .cache
+global-exclude __pycache__ *.py[cod] *.so *.o *.log
