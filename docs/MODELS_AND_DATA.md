@@ -1,7 +1,7 @@
-# Model and dataset downloads
+# Model and Dataset Downloads
 
-Download inputs separately from the source artifact. These upstream model cards
-identify the checkpoints and their access terms:
+Please download model checkpoints and evaluation data separately. The following
+model repositories provide the checkpoints, model cards, and access terms:
 
 | Model ID | Official files and model card | License/access |
 | --- | --- | --- |
@@ -9,24 +9,24 @@ identify the checkpoints and their access terms:
 | `Qwen/Qwen3-30B-A3B-Instruct-2507` | [Qwen on Hugging Face](https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507) | [Apache 2.0](https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507/blob/main/LICENSE) |
 | `meta-llama/Llama-3.3-70B-Instruct` | [Meta on Hugging Face](https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct) | [Llama 3.3 Community License](https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct/blob/main/LICENSE); gated access; TP=2 |
 
-Use the Hugging Face/Transformers safetensors checkpoints with BF16 weights,
-their configuration files and tokenizer files. GGUF, AWQ, GPTQ and other weight
-quantizations change the experiment. Qwen3-30B-A3B-Instruct-2507 is the specific
-30B MoE checkpoint; its active parameter count does not reduce the storage of
-all model weights.
+The reference configuration uses Hugging Face/Transformers safetensors
+checkpoints with BF16 weights, together with their configuration and tokenizer
+files. GGUF, AWQ, GPTQ, and other weight quantizations change the experimental
+configuration. Qwen3-30B-A3B-Instruct-2507 is a mixture-of-experts (MoE) model;
+storage requirements reflect all model weights, including inactive experts.
 
-## Download checkpoints
+## Download Checkpoints
 
-The installed environment provides the `hf` CLI. For Meta models, request
-access and accept the upstream terms on the model page, then authenticate
+The JetFire environment includes the `hf` command-line tool. For Meta models,
+please request access and accept the terms on the model page, then sign in
 locally:
 
 ```bash
 hf auth login
 ```
 
-Use the following immutable revisions for the download recipe. Retain these
-IDs with experiment notes.
+The following immutable revisions identify the evaluation inputs. Please retain
+these IDs with your experiment records.
 
 | Input | Immutable upstream revision |
 | --- | --- |
@@ -47,8 +47,8 @@ hf download Qwen/Qwen3-30B-A3B-Instruct-2507 \
   --revision "$JETFIRE_QWEN3_REVISION" --local-dir "$JETFIRE_QWEN3_30B"
 ```
 
-The `original/` Llama files are a separate checkpoint format and are not needed
-for this artifact. For optional 70B:
+The Llama download excludes `original/`, which contains a separate checkpoint
+format. To include Llama 70B, use:
 
 ```bash
 export JETFIRE_LLAMA33_70B=/absolute/path/to/models/Llama-3.3-70B-Instruct
@@ -57,26 +57,27 @@ hf download meta-llama/Llama-3.3-70B-Instruct \
   --local-dir "$JETFIRE_LLAMA33_70B" --exclude 'original/*'
 ```
 
-Approximate BF16 weight storage is 16 GB for 8B, 61 GB
-for Qwen 30B, and 141 GB for 70B, excluding tokenizer/configuration files and
-download caches. These are planning estimates. Avoid keeping redundant formats
-if disk space is limited.
+Allow approximately 16 GB for Llama 8B, 61 GB for Qwen 30B, and 141 GB for
+Llama 70B BF16 weights. These estimates exclude configuration files, tokenizers,
+and download caches. Keeping only the required checkpoint format saves disk
+space.
 
-The serving/evaluation tools record configuration/tokenizer hashes and model
-file inventories where available; these do not constitute full weight-content
-checksums. Record upstream revision IDs and verify weight checksums from the
-upstream file metadata if full input authentication is required. See the
+The evaluation tools record configuration and tokenizer hashes, along with model
+file inventories where available. To verify the weight contents, please retain
+the upstream revision IDs and check the weight checksums against the upstream
+file metadata; the recorded inventories do not include full weight checksums.
+See the
 [Hugging Face CLI reference](https://huggingface.co/docs/huggingface_hub/v0.36.0/guides/cli)
-for authentication, download filtering and revision selection.
+for authentication, download filtering, and revision selection.
 
 ## Original LongBench v1
 
-Use the [original LongBench v1 instructions](https://github.com/THUDM/LongBench/blob/main/LongBench/README.md)
-and its [official dataset repository](https://huggingface.co/datasets/zai-org/LongBench).
+Evaluation uses the [original LongBench v1](https://github.com/THUDM/LongBench/blob/main/LongBench/README.md)
+from the [official dataset repository](https://huggingface.co/datasets/zai-org/LongBench).
 The earlier `THUDM/LongBench` dataset URL redirects to `zai-org/LongBench`.
-Download the repository's `data.zip`; do not substitute LongBench v2 or the
-`*_e.jsonl` LongBench-E files. Check the upstream dataset and constituent task
-terms before use.
+Please review the dataset and constituent task terms before downloading
+`data.zip`. This evaluation uses the original task files; LongBench v2 and
+the `*_e.jsonl` LongBench-E files define different evaluations.
 
 ```bash
 export JETFIRE_LONGBENCH_REVISION=5e628be450b7e67fb7ae6e201bd6d8f7056f7672
@@ -88,7 +89,7 @@ python -m zipfile -e "$JETFIRE_DATA_ROOT/data.zip" "$JETFIRE_DATA_ROOT"
 export JETFIRE_LONGBENCH_DATA_DIR="$JETFIRE_DATA_ROOT/data"
 ```
 
-Check that the configured directory directly contains these files:
+The configured directory should directly contain the following files:
 
 ```text
 narrativeqa.jsonl     qasper.jsonl       multifieldqa_en.jsonl
@@ -96,11 +97,11 @@ hotpotqa.jsonl        2wikimqa.jsonl     musique.jsonl
 gov_report.jsonl     qmsum.jsonl        trec.jsonl      samsum.jsonl
 ```
 
-The ten-task full evaluation contains 1,950 examples: 150 MultiFieldQA examples
-and 200 examples for each other task. NIAH uses this same local text as filler
-and generates its needles deterministically; no separate NIAH download is
-required. Dataset JSONL hashes are captured by the artifact entry point.
+The full ten-task evaluation contains 1,950 examples: 150 for MultiFieldQA and
+200 for each other task. Needle-in-a-Haystack (NIAH) uses the same local text
+as filler and generates needles deterministically, so it requires no separate
+download. The artifact entry point records the dataset JSONL hashes.
 
-Models and data can be kept outside the checkout and reused across invocations.
-Once all dependencies and inputs are present, set `HF_HUB_OFFLINE=1` and
-`TRANSFORMERS_OFFLINE=1` if you require the run to avoid Hub access.
+Models and data may be stored outside the checkout and reused across runs.
+For offline evaluation, download all dependencies and inputs first, then set
+`HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` to disable Hub access.

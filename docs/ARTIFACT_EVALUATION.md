@@ -1,58 +1,53 @@
-# Artifact evaluation
+# Artifact Evaluation
 
-This guide maps the [JetFire paper](https://drive.google.com/file/d/1AOmO2idWrcDd-OW__JfwXeb1o92EPzEq/view)
-to executable source. The distribution contains source, input recipes and
-instructions. Reviewers generate all logs, predictions and results themselves;
-no author run records are needed by the commands below. External attention
-systems appear only as upstream implementation links in the README.
+This guide describes how to reproduce the performance, accuracy, and component
+experiments in the [JetFire paper](https://drive.google.com/file/d/1AOmO2idWrcDd-OW__JfwXeb1o92EPzEq/view).
+Download the inputs separately and use the commands below to generate logs,
+predictions, and results. Implementations of related systems are linked in the
+[README](../README.md#related-work).
 
-The main release workflow targets Llama-3.1-8B and Qwen3-30B-A3B-Instruct-2507.
-The 70B commands use two GPUs with TP=2. The coverage table maps paper
-experiments to the supplied entry points and configurations.
+The examples use Llama-3.1-8B and Qwen3-30B-A3B-Instruct-2507. Llama-3.3-70B
+uses two GPUs with tensor parallelism (TP=2).
 
-## Preparation and execution record
+## Preparation and Execution Record
 
-Create the environment from the source root, then activate it:
+From the repository root, create and activate a new Conda environment:
 
 ```bash
 bash scripts/setup_env.sh jetfire-ae
 conda activate jetfire-ae
 ```
 
-The script installs the constrained dependencies and runs `pip check`.
-Choose a new name if `jetfire-ae` already exists. The [README](../README.md)
-lists the system CUDA/compiler and hardware requirements.
-Follow [model and data preparation](MODELS_AND_DATA.md), then set
-`JETFIRE_LLAMA31_8B`, `JETFIRE_QWEN3_30B` and
-`JETFIRE_LONGBENCH_DATA_DIR`. Set `JETFIRE_LLAMA33_70B` only when evaluating
-70B. The accuracy evaluator uses ten original LongBench v1 English task JSONL
-files, and NIAH uses that same text as filler. Serving measurements use seeded random
-prompts and do not require the dataset.
+The script installs the pinned Python dependencies and runs `pip check`.
+Please choose a different environment name if `jetfire-ae` already exists.
+The [README](../README.md#getting-started) lists the system and hardware requirements.
+Follow the [download guide](MODELS_AND_DATA.md) to configure
+`JETFIRE_LLAMA31_8B`, `JETFIRE_QWEN3_30B`, and `JETFIRE_LONGBENCH_DATA_DIR`;
+set `JETFIRE_LLAMA33_70B` when evaluating 70B. Accuracy evaluation uses ten
+original LongBench v1 English task files. NIAH uses the same text as filler;
+serving measurements use seeded random prompts and require only the checkpoint.
 
-Use BF16 weights and reserve CPU RAM for the host KV mirror. The approximate
-mirror requirement is `2 * layers * KV_heads * head_dim * resident_tokens * 2`
-bytes, divided across TP ranks. It scales with resident requests as well as
-context. For example, an 8B 128K context needs approximately 16 GiB of host
-KV mirror per resident request, or 256 GiB for sixteen. Model loading, staging buffers,
-worker memory and allocator overhead require additional RAM. Plan for 512 GiB
-host RAM for long-context batch-16 benchmarks; smaller experiments can require less.
-This is a sizing estimate, not a demonstrated minimum.
+Evaluation uses BF16 weights and a host KV mirror. The mirror requires
+approximately `2 * layers * KV_heads * head_dim * resident_tokens * 2` bytes
+in total, divided across TP ranks. Here, `resident_tokens` counts tokens across
+all resident requests. For Llama 8B at 128K context, the mirror occupies about
+16 GiB per request, or 256 GiB for sixteen requests. Allow additional RAM for
+model loading, staging buffers, workers, and allocator overhead. A practical
+planning estimate for long-context batch-16 experiments is 512 GiB of host RAM;
+the actual requirement depends on the configuration.
 
-Keep the machine, NUMA placement, CPU thread count and affinity consistent for
-comparisons. The tested processor family was AMD EPYC 9654. CPU correction
-defaults to 32 workers per TP rank. For Llama 8B/Qwen TP=1 benchmarks,
-reserve 64 physical cores where possible. Inspect
+For timing comparisons, keep the hardware, NUMA placement, CPU thread count,
+and affinity consistent. The reference processor is AMD EPYC 9654, and CPU
+correction defaults to 32 workers per TP rank. For Llama 8B/Qwen TP=1
+benchmarks, reserve 64 physical cores where possible. Inspect
 `lscpu -e=CPU,CORE,SOCKET,NODE` and, if needed, prefix the benchmark command with
-`taskset -c <64 physical-core IDs>`. Choose one logical CPU per physical core;
-do not copy another machine's CPU IDs blindly. The benchmark records inherited
-affinity.
+`taskset -c <64 physical-core IDs>`. Select IDs from your machine, using one
+logical CPU per physical core. The benchmark records the inherited affinity.
 
-For Llama 70B TP=2, retain the full host CPU affinity available to the job.
-Launch from a shell that has not inherited the TP=1 `taskset` restriction:
-two TP ranks each use 32 CPU correction workers and need CPU headroom for the
-remaining engine work. Report worker count per rank and the inherited CPU
-affinity alongside timing results. Avoid competing GPU jobs and
-CPU/DRAM-intensive work.
+For Llama 70B TP=2, launch from a shell with the full host CPU affinity available
+to the job. Each rank uses 32 correction workers, with additional CPU capacity
+needed for engine work. Please record the worker count and inherited affinity
+with timing results, and use a machine without competing GPU or CPU/DRAM-intensive jobs.
 
 ```bash
 export PYTHON_BIN=python
@@ -62,23 +57,25 @@ export TORCH_EXTENSIONS_DIR="$JETFIRE_WORK_DIR/torch_extensions"
 export MAX_JOBS=8
 ```
 
-The artifact entry point saves a manifest and step logs under `--out-dir`
-(default: a new timestamped `results/` directory inside the checkout). Use an
-external working directory to keep the source tree clean.
-Use a new output directory for each invocation; an existing directory is
-rejected. Inspect `status` and every step return code. Keep raw logs and
-prediction files, including failed runs. A nonzero exit is a failure, not an accuracy zero
-or evidence of OOM.
+The artifact entry point saves a manifest and step logs under `--out-dir`;
+the default is a timestamped directory under `results/` inside the checkout.
+An external working directory keeps generated files separate from the source.
+Use a new output directory for independent runs; the artifact wrapper rejects
+an existing directory. Before interpreting results, check `status` and each
+step's return code, and retain the logs and predictions from failed runs.
+Benchmark resumption is described in [Reading Generated Results](#reading-generated-results).
 
-## Paper coverage
+## Paper Coverage
+
+The following table maps paper experiments to the supplied entry points.
 
 | Paper item | JetFire entry point | Configuration |
 | --- | --- | --- |
 | Main accuracy table | `artifact accuracy` | Three models, K4V4/G128 and K3V2/G64, k256; ten tasks |
-| NIAH | `artifact niah`, `run_niah_grid_release.sh` | 11 depths, 10 samples/depth/context; 16K–128K, Qwen up to 256K |
-| Table 4 serving latency | `benchmark` (Llama 8B/Qwen), `artifact serve` (single configuration, including 70B TP=2) | Supply prefill and decode lengths; the paper uses batches 1/4/16, 16K–128K (Qwen also 256K), 128 outputs and median 3 |
+| NIAH | `artifact niah`, `run_niah_grid_release.sh` | 11 depths, 10 samples per depth/context; grid targets listed below |
+| Table 4 serving latency | `benchmark` (Llama 8B/Qwen), `artifact serve` (single configuration, including 70B TP=2) | Configurable prefill/decode lengths; paper settings: batches 1/4/16, 16K–128K (Qwen also 256K), 128 output tokens, median of three runs |
 | Fig. 5 memory | `memory_breakdown_probe.py --mode run` | Llama 8B, 64K, 32 decode tokens; serving harness also reports residency |
-| Fig. 6 K/V allocation | `run_release_kv_sensitivity.sh` | Nine symmetric K/V combinations, Qwen 2Wiki, k32, G64 |
+| Fig. 6 K/V allocation | `run_release_kv_sensitivity.sh` | Nine K/V bit-width pairs with symmetric quantization, Qwen 2Wiki, k32, G64 |
 | Fig. 7 correction | `release_accuracy_eval.py --jetfire-approx-only` | k0 output ablation vs k256, 8B/Qwen, both formats, ten tasks |
 | Fig. 8 k sensitivity | `run_release_topk_sensitivity.sh` | k32/64/128/256/512/1024; K3V2 and K2V2 |
 | Table 7 memory breakdown | `run_memory_breakdown_suite.sh` | Qwen K4V4, 8K–256K; separate calculated and measured rows |
@@ -86,11 +83,13 @@ or evidence of OOM.
 | Fig. 9 optimization ablation | `artifact_optimizations.py` | JetFire / +O1 / +O1+O2 / +O1+O2+O3; partitioning off |
 | Table 9 overlap components | `artifact_overlap.py` | Paired eager timing and separate CPU/CUDA timeline captures |
 
-Fig. 5 B16 requires a concurrent serving measurement in addition to the
-single-request memory probe. The optimization runner uses the documented
-historical controls on this runtime.
+For Fig. 5 at batch 16, collect a concurrent serving measurement in addition
+to the single-request memory probe. The optimization runner reconstructs the
+documented historical controls on the supplied runtime.
 
-## Configurable performance benchmark
+## Configurable Performance Benchmark
+
+Set the prefill and decode lengths in tokens, and choose a batch size:
 
 ```bash
 PREFILL_LEN=32768
@@ -105,48 +104,47 @@ python -m jetfire_vllm.bench.benchmark \
 ```
 
 `--prefill-len` and `--decode-len` are required positive token counts. Each
-invocation uses that length pair; change the variables and output directory for
-another experiment. `--models` selects Llama 8B, Qwen, or both. `--batches`
-accepts positive comma-separated sizes such as `1,4,16`; `--modes` selects
-`k3v2`, `k4v4`, or both. The default mode pair is K3V2/G64 and K4V4/G128,
-with k256 and BF16 weights. Prefill plus generation must fit the checkpoint's
-context window. The driver bounds optional scheduling guard space by the
-remaining window; it does not replace the requested prefill or decode length.
+invocation benchmarks one length pair; prefill plus generation must fit the
+checkpoint's context window. Optional scheduling guard space uses only the
+remaining window and preserves the requested lengths.
 
-`--runs` sets the number of fresh-server timed trials per configuration
-(default three). `--warmups` sets untimed warmups per server (default one).
-The optional `--semantic-probe` checks meaningful model responses separately
-from random-prompt throughput and is disabled by default. Replace `--execute`
-with `--dry-run` to inspect the requested lengths, modes, coverage, budget
-policy and command templates without creating GPU jobs. Numerical byte/token
-budgets are resolved from the local checkpoint and GPU during execution.
+| Option | Behavior |
+| --- | --- |
+| `--models` | Select Llama 8B, Qwen, or both, as in the example. |
+| `--batches` | Positive comma-separated batch sizes, such as `1,4,16`. |
+| `--modes` | `k3v2`, `k4v4`, or both; defaults to K3V2/G64 and K4V4/G128, with k256 and BF16 weights. |
+| `--runs` | Fresh-server timed trials per configuration; default three. |
+| `--warmups` | Untimed warmups per server; default one. |
+| `--semantic-probe` | Optional meaningful-response check, separate from random-prompt throughput; disabled by default. |
+| `--dry-run` | Replace `--execute` to inspect the plan without launching GPU jobs. |
 
-For one length pair, the configuration count is the number of selected models
-times selected modes times batch sizes. Expected measured trials are that count
-times `--runs`. Expected measured requests are `--runs` times the sum of batch
-sizes across configurations; multiply requests by `--decode-len` for expected
-generated tokens. The generated plan and summaries record these totals.
+The plan includes lengths, modes, coverage, budget policy, and command templates.
+Execution resolves numerical byte/token budgets from the local checkpoint and GPU.
 
-For these TP=1 models, the driver fixes a bounded KV allocation from physical
-GPU memory, BF16 weights and a 5 GiB scratch reservation. It rounds compressed
-sequence storage to blocks with a safety allowance, then computes resident
-request capacity. The cap is
+For each length pair, configuration count is models × modes × batch sizes.
+Expected trials are configuration count × `--runs`. Expected requests are
+`--runs` × the sum of batch sizes across configurations; multiply by
+`--decode-len` for expected generated tokens. The plan and summaries record
+these totals.
+
+For these TP=1 models, the driver computes a bounded KV allocation from physical
+GPU memory, BF16 weights, and a 5 GiB scratch reservation. The cap is
 `floor((0.95 * total_GPU_GiB - BF16_weights_GiB - 5) * 2**30)` bytes;
-compressed KV estimates use block size 16 and safety factor 1.02.
-The scheduler budget covers all submitted requests when residency and
-automatic prefill capacity permit; otherwise, requests queue behind resident microbatches.
-Execution records the resulting byte and scheduler-token budgets, including
-4,096 scheduler headroom tokens for queued cases. KV allocation and scheduler
-budgets are recalculated for the requested input and output lengths. This
-TP=1 policy differs from the serving
-harness's default automatic budgets used by `artifact serve` below.
+compressed KV estimates use blocks of 16 tokens and a safety factor of 1.02.
+Resident capacity is calculated from these estimates. Requests run together
+when residency and prefill capacity permit; additional requests queue behind
+resident microbatches. Execution records byte and scheduler-token budgets,
+including 4,096 scheduler headroom tokens for queued cases. Budgets are
+recalculated for the requested lengths. The single-configuration `artifact serve`
+command uses the serving harness's automatic capacity policy.
 
-Execution time depends on the selected models, lengths, batches and run count,
-including repeated server loading and compilation. Initial extension
-compilation can take roughly 10–30 minutes. Large performance, LongBench or
-NIAH sweeps can take hours to days depending on context and coverage.
+Total execution time includes repeated server loading and compilation.
+Initial extension compilation can take roughly 10–30 minutes; large performance
+or accuracy sweeps can take hours to days, depending on context and coverage.
 
-## Accuracy and correction
+## Accuracy and Correction
+
+The following examples evaluate Llama 8B on LongBench v1 in both main formats:
 
 ```bash
 python -m jetfire_vllm.artifact accuracy --model-key llama31_8b \
@@ -155,18 +153,18 @@ python -m jetfire_vllm.artifact accuracy --model-key llama31_8b \
   --mode k4v4 --gpus 0 --out-dir "$JETFIRE_WORK_DIR/accuracy_llama8_k4v4"
 ```
 
-Replace `llama31_8b` with `qwen3_30b_a3b` for Qwen. For optional 70B, use
-`--model-key llama33_70b --gpus 0,1 --tp 2`. Full LongBench coverage
-is 1,950 examples per configuration: 150 MultiFieldQA examples and 200 for
-each other task. Compare the arithmetic mean of the ten task scores, rather
-than a sample-weighted mean. Generation is greedy with task-specific official
-limits; TREC and SAMSum use their raw official templates and first output
-line for scoring. Changed prompt protocols invalidate old resume rows.
-Partial or skipped coverage cannot serve as a full paper result.
+For Qwen, replace `llama31_8b` with `qwen3_30b_a3b`. For Llama 70B, use
+`--model-key llama33_70b --gpus 0,1 --tp 2`. Full LongBench coverage comprises
+1,950 examples per configuration: 150 MultiFieldQA examples and 200 for each
+other task. The reported aggregate is the arithmetic mean of the ten task scores.
+Generation is greedy with the official task-specific limits. TREC and SAMSum
+use their raw official templates and the first output line for scoring.
+Comparable paper results require complete coverage and the same prompt protocol;
+changes to that protocol invalidate existing resume rows.
 
-The k0 experiment keeps correction machinery active and returns the dense
-approximation. It is an **accuracy-only output ablation**, not a timing
-measurement of a runtime without correction:
+The k0 experiment returns the dense approximation while keeping correction
+machinery active. Use it as an **accuracy-only output ablation**; its timings
+include correction work:
 
 ```bash
 bash jetfire_vllm/bench/run_release_accuracy_suite.sh \
@@ -176,11 +174,11 @@ bash jetfire_vllm/bench/run_release_accuracy_suite.sh \
   --out-dir "$JETFIRE_WORK_DIR/accuracy_llama8_k3v2_k0"
 ```
 
-For NIAH, select each context explicitly and preserve requested and effective
-depths. Default 0–100% requested depths map into 5–95% with edge margin 5.
-Ten repeats at eleven depths give 110 trials per context. Choose a context
-that leaves room for generation and prompt overhead inside the checkpoint's
-window; do not force an out-of-window result and describe it as supported.
+For Needle-in-a-Haystack (NIAH), choose a context length that leaves room for
+generation and prompt overhead within the checkpoint's window. By default,
+eleven requested depths from 0–100% map into effective depths of 5–95%, using
+an edge margin of 5%. Ten repeats give 110 trials per context. Results retain
+both requested and effective depths.
 
 ```bash
 python -m jetfire_vllm.artifact niah --model-key llama31_8b \
@@ -188,44 +186,44 @@ python -m jetfire_vllm.artifact niah --model-key llama31_8b \
   --out-dir "$JETFIRE_WORK_DIR/niah_llama8_32k"
 ```
 
-For the full context grid, use `run_niah_grid_release.sh` with `--phase llama31`,
-`--phase qwen3` or `--phase llama33`. The grid includes the main formats and
-additional JetFire sensitivity formats. Use the Qwen grid for its 256K context;
-the single-context `artifact niah` command uses a 128K suite window.
+For the full grid, use `run_niah_grid_release.sh` with `--phase llama31`,
+`--phase qwen3`, or `--phase llama33`. It evaluates the main formats plus
+K4V2 and K2V2. Llama target lengths are 16,000, 32,000, 64,000, and 125,000
+tokens; Qwen adds 250,000 tokens. These decimal targets leave generation
+headroom, and each result records the actual `prompt_tokens`. Use the Qwen
+grid for the 256K suite; single-context `artifact niah` uses a 128K suite window.
 
 ```bash
 bash jetfire_vllm/bench/run_niah_grid_release.sh --phase qwen3 \
   --gpus-qwen3 0 --out-dir "$JETFIRE_WORK_DIR/niah_qwen_grid"
 ```
 
-The NIAH score compares the entire output and target after removing punctuation
-and whitespace only. Explanations, extra letters, and additional numbers fail.
-Results also retain raw stripped-string exact match. Keep the scoring protocol
-and raw outputs with the score; normalized match differs from raw exact match.
+NIAH compares the entire output with the target after removing only punctuation
+and whitespace. Extra explanations, letters, or numbers count as mismatches.
+Results also retain exact match on the stripped raw strings. Please report
+the scoring protocol with the score and retain the raw outputs.
 
-## Official benchmark client framing
+## Official Benchmark Client Framing
 
 The serving harness runs the installed official vLLM `bench serve` CLI through
-`jetfire_vllm.bench.official_client`. The subprocess adapter presents complete
-LF-delimited SSE events to the unchanged official request coroutine, preserving
-UTF-8 code points, split `data: ` prefixes, and JSON string whitespace across
-arbitrary HTTP transport chunks. Invalid or truncated UTF-8 remains a failed
-request. Each timed trial records the adapter and upstream source identity in
-`client_decoder.json`; the official CLI argument tail, request payload, server,
-and upstream clock/metric statements are unchanged.
+`jetfire_vllm.bench.official_client`. Its `strict-sse-frames-v1` adapter delivers
+complete LF-delimited SSE events to the unchanged official request coroutine,
+preserving UTF-8, split `data: ` prefixes, and JSON string whitespace across
+HTTP chunks. Strict UTF-8 validation includes the final bytes at EOF; invalid
+or truncated UTF-8 produces a failed request. The protocol targets the pinned
+vLLM emitter's LF stream; general CRLF handling and strict validation of
+arbitrary malformed JSON/SSE trailers are outside its scope.
 
-The adapter identifies its framing protocol as `strict-sse-frames-v1`.
-Complete-event delivery can defer timestamp observation until
-the event separator arrives, so compare trials using the same client protocol;
-zero timing overhead is not claimed. Its delimiter scope is the pinned vLLM
-emitter's LF SSE stream. General CRLF SSE support and strict validation of
-arbitrary malformed JSON/SSE trailers are not claimed. Strict UTF-8 validation
-also checks the final bytes at EOF.
+Each trial records adapter and upstream source identities in `client_decoder.json`.
+CLI arguments, request payloads, the server, and upstream timing/metric
+statements are unchanged. Delivering complete events can defer timestamp
+observation until the event separator arrives and can add overhead. Please
+use the same client protocol when comparing trials.
 
-## Serving and memory
+## Serving and Memory
 
-For a single configuration, including Llama-3.3-70B on two GPUs, set the
-lengths and batch explicitly:
+For a single configuration, including Llama-3.3-70B on two GPUs, set the prefill
+length, decode length, and batch size:
 
 ```bash
 PREFILL_LEN=32768
@@ -239,19 +237,20 @@ python -m jetfire_vllm.artifact serve --model-key llama33_70b \
   --out-dir "$JETFIRE_WORK_DIR/serve_llama70_k3v2_p${PREFILL_LEN}_d${DECODE_LEN}_b${BATCH_SIZE}"
 ```
 
-Set `JETFIRE_LLAMA33_70B` to the downloaded checkpoint first. For Llama 8B or
-Qwen, use `--model-key llama31_8b` or `--model-key qwen3_30b_a3b` with
-`--gpus 0 --tp 1`. `--context` and `--output-len` remain aliases for
-`--prefill-len` and `--decode-len`. The single-configuration command uses the
-serving harness's automatic capacity policy. Use the configurable benchmark
-above for TP=1 batch or format sweeps with its explicit bounded KV policy.
+Set `JETFIRE_LLAMA33_70B` to the downloaded checkpoint before running this command.
+For Llama 8B or Qwen, use `--model-key llama31_8b` or
+`--model-key qwen3_30b_a3b` with `--gpus 0 --tp 1`. The aliases `--context`
+and `--output-len` correspond to `--prefill-len` and `--decode-len`.
+For TP=1 batch or format sweeps with bounded KV allocation, please use the
+[configurable benchmark](#configurable-performance-benchmark).
 
-The serving harness writes the official vLLM client JSON, server/client logs,
-summary JSON/CSV, and a report. Report end-to-end time, TTFT, TPOT, actual
-output tokens, successful/failed requests, chosen prefill activation chunks,
-and resident admission alongside submitted concurrency. The first token comes
-from BF16 prefill. Do not call end-to-end time decode-only latency, extrapolate
-16-token measurements to 128 tokens, or infer OOM from a timeout.
+The harness writes official vLLM client JSON, server/client logs, summary
+JSON/CSV, and a report. Report end-to-end time, time to first token (TTFT),
+time per output token (TPOT), actual output tokens, successful/failed requests,
+prefill activation chunks, and resident capacity alongside submitted concurrency.
+The first token comes from BF16 prefill. End-to-end time includes prefill;
+generation lengths should match when comparing latency. Diagnose OOM from
+allocation errors, since a timeout alone does not identify its cause.
 
 ```bash
 MODE=run MODELS=qwen3_30b_a3b CONFIGS=k4v4 \
@@ -260,17 +259,17 @@ MODE=run MODELS=qwen3_30b_a3b CONFIGS=k4v4 \
   bash jetfire_vllm/bench/run_memory_breakdown_suite.sh
 ```
 
-The memory wrapper defaults to **computed-only** unless `MODE=run` is set.
-Calculated KV sizes do not establish measured capacity. The breakdown
-distinguishes GPU KV, CPU BF16 shadows, metadata/staging and runtime allocation;
-query GPU residency and peak allocation separately when comparing concurrency.
+The memory wrapper defaults to **computed-only**; set `MODE=run` for measurement.
+It separates GPU KV, CPU BF16 mirrors, metadata/staging, and runtime allocation.
+Calculated sizes describe storage requirements. Capacity comparisons also need
+measured GPU residency and peak allocation at the chosen concurrency.
 
-## Sensitivity and optimization controls
+## Sensitivity and Optimization Controls
 
-The kernels support all nine symmetric K/V bit combinations from {2,3,4},
-with group sizes 64/128. Symmetric INT2 has three signed levels; the separately
-named asymmetric four-level INT2 compatibility mode is a different format.
-The paper's primary recipes use K3V2/G64 and K4V4/G128.
+The kernels support nine K/V bit-width pairs drawn from {2, 3, 4}, using signed
+symmetric quantization and group sizes 64/128. Symmetric INT2 has three signed
+levels; the asymmetric four-level INT2 compatibility mode is a separate format.
+The paper's main configurations are K3V2/G64 and K4V4/G128.
 
 ```bash
 bash jetfire_vllm/bench/run_release_kv_sensitivity.sh \
@@ -290,17 +289,21 @@ python -m jetfire_vllm.bench.artifact_optimizations \
   --out-dir "$JETFIRE_WORK_DIR/optimizations"
 ```
 
-The command executes the optimization cases; add `--dry-run` for an optional
-plan. O1 bundles async prefill
-mirroring and fused KV writes; O2 overlaps CPU correction with the GPU value
-phase; O3 adds decode graphs. The runner fixes K3V2/G64/k256, batch 1,
-16 outputs, 32 CPU threads and 32K/64K contexts. Activation partitioning is
-off. Its plan records all toggles and qualifications. Selection-quality probes
-use real model traces but are offline mechanism probes; they do not establish
-serving TPOT or replace full task accuracy. Synthetic filler requires explicit
-opt-in and cannot be reported as the paper's data protocol.
+The optimization command executes the cases; add `--dry-run` to inspect its
+plan. O1 combines asynchronous prefill mirroring and fused KV writes; O2
+overlaps CPU correction with the GPU value phase; O3 adds decode graphs.
+The runner fixes K3V2/G64/k256, batch 1, 16 output tokens, 32 CPU threads,
+and 32K/64K contexts, with activation partitioning off. Its plan records all
+controls and qualifications for the reconstructed experiment.
 
-## Component timing and profiling
+Selection-quality probes use real model traces to measure offline mechanism
+behavior. Serving TPOT and full task accuracy require the corresponding
+evaluations above. Synthetic filler is available through explicit opt-in and
+uses a different data protocol from the paper.
+
+## Component Timing and Profiling
+
+These commands isolate production CPU correction and pinned-memory copies:
 
 ```bash
 python -m jetfire_vllm.bench.cpu_correction_microbench \
@@ -309,7 +312,6 @@ python -m jetfire_vllm.bench.pcie_transfer_microbench \
   --out-dir "$JETFIRE_WORK_DIR/pcie"
 ```
 
-These isolate production CPU correction and pinned-memory copies respectively.
 For the complete correction/value timeline, run:
 
 ```bash
@@ -318,74 +320,72 @@ python -m jetfire_vllm.bench.artifact_overlap \
   --runs 3 --profile-runs 1 --out-dir "$JETFIRE_WORK_DIR/overlap"
 ```
 
-The command executes the profiling experiment; add `--dry-run` for an optional
-plan. The runner fixes K3V2/G64/k256, batch 1,
-16 outputs, 32 CPU threads, graphs off, and activation partitioning off. It
-alternates serial and overlapped correction on the same warmed server, saving
-unprofiled request timings separately from diagnostic CPU/CUDA captures. Raw
-Chrome traces, CPU timestamp sidecars, per-layer CSVs, runtime settings and
-coverage reports are retained. Reports expose D2H copies, CPU gather/compute,
-value kernels, join wait, blend, clock uncertainty, and uncovered gaps. Mapped
-host reads during blend cannot be separated into an independent H2D copy.
+Add `--dry-run` to inspect the profiling plan. The runner fixes K3V2/G64/k256,
+batch 1, 16 output tokens, and 32 CPU threads, with graphs and activation
+partitioning off. It alternates serial and overlapped correction on the same
+warmed server, saving unprofiled request timings separately from CPU/CUDA captures.
+Outputs include Chrome traces, CPU timestamp sidecars, per-layer CSVs, runtime
+settings, and coverage reports. Reports identify D2H copies, CPU gather/compute,
+value kernels, join wait, blend, clock uncertainty, and uncovered gaps.
+Mapped host reads occur during blend and are not a separate H2D copy.
 
-Incomplete timeline mapping or different paired outputs fails the evaluation.
-Profiling adds overhead; report that overhead and use the separate unprofiled
-timings for latency claims. Interval overlap by itself does not establish a
-corresponding end-to-end speedup, and short-context results may show a slowdown.
+A valid evaluation requires complete timeline mapping and matching paired
+outputs. Please report profiling overhead and use unprofiled timings for latency
+comparisons. End-to-end speedup depends on the full request path; interval
+overlap alone does not establish a speedup, and short contexts may show a slowdown.
 
-## Reading generated results
+## Reading Generated Results
 
-For `artifact` stages, start with `manifest.json`: `passed` means that stage's
-commands completed. Check every step's exit status and its local log. Model
-accuracy must be assessed from the completed coverage and scored predictions.
+For `artifact` stages, start with `manifest.json`. A status of `passed` means
+the stage's commands completed; model accuracy is assessed from coverage and
+scored predictions. Check each step's exit status and local log.
 
-The serving harness writes `summary.json`, `summary.csv` and `report.md`
-beneath its output directory, plus per-trial official client output and
-server/client logs. The configurable benchmark aggregates its generated results in
-`performance_summary.json`, `performance_summary.csv` and
-`performance_summary.md`. A complete run must have overall status `passed`,
+Serving outputs are `summary.json`, `summary.csv`, and `report.md`, with
+per-trial official client output and server/client logs. The configurable
+benchmark writes `performance_summary.json`, `performance_summary.csv`, and
+`performance_summary.md`. A complete benchmark has status `passed`,
 `cases_passed == cases_expected`, and
-`measured_runs_complete == measured_runs_expected`, with expected counts
-derived from the requested models, modes, batch sizes and run count. Use
-`--execute --resume` with the same output directory after an interrupted run;
-source, model input, environment and policy fingerprints must match. Changed
-settings require a new directory.
+`measured_runs_complete == measured_runs_expected`. Expected counts follow the
+requested models, modes, batch sizes, and run count.
 
-Report every trial value and its aggregate median, successful/failed requests,
-actual output token counts, submitted batch and resident capacity. End-to-end
-batch latency includes prefill, generation, queueing and client transport;
-server startup and weight loading are excluded. TTFT and TPOT are separate
-metrics. Use the same units and aggregation when comparing with Table 4;
-per-request latency is not automatically equivalent to batch completion time.
+To resume an interrupted configurable benchmark, use `--execute --resume` with
+the same output directory. Source, model input, environment, and policy
+fingerprints must match; changed settings require a new directory.
+
+Please report individual trials and their median, successful/failed requests,
+actual output token counts, submitted batch size, and resident capacity.
+End-to-end batch latency includes prefill, generation, queueing, and client
+transport; server startup and weight loading are excluded. TTFT and TPOT are
+separate metrics. Comparisons with Table 4 require the same units and aggregation;
+per-request latency and batch completion time measure different quantities.
 
 Accuracy output contains per-task counts/scores and predictions when requested.
-Inspect partial/skipped/too-long samples before computing the ten-task macro
-average. NIAH output includes requested/effective depths, targets and both
-normalized and raw match. A missing or failed cell remains missing; neither a
-zero score nor an OOM label should be substituted for it. The guide and paper
-supply the comparison protocol; the source archive contains no saved measured
-numbers to import into a new result.
+Check coverage, including skipped and overlength samples, before computing the
+ten-task macro average. NIAH output includes requested/effective depths,
+targets, and both normalized and raw match. Keep missing or failed cells
+separate from measured zero scores, and classify execution failures from their
+recorded errors.
 
-The paper does not specify every software version, random prompt, scheduler
-budget, or timing boundary. Preserve the generated environment/input records
-and report those differences. Exact numerical equality across hardware and
-software revisions is not an acceptance criterion for functional correctness.
-Full baseline speedup claims require the separately linked baseline systems.
+For comparisons with the paper, retain environment/input records and report
+differences in software versions, random prompts, scheduler budgets, and timing
+boundaries. These settings and the hardware can affect numerical results;
+functional correctness is assessed from completed evaluations and their outputs.
+Speedup comparisons also require measurements of the separately linked systems.
 
-## Troubleshooting and reruns
+## Troubleshooting and Reruns
 
 | Symptom | Check or action |
 | --- | --- |
-| Checkpoint download returns 401/403 | Confirm the exact model ID, upstream access approval and local `hf auth login`; do not put tokens in commands or artifact reports. |
-| `nvcc` missing or extension compilation fails | Check CUDA 12.8, C++17 compiler and `TORCH_EXTENSIONS_DIR`; lower `MAX_JOBS` if compilation exhausts host memory. Keep the compiler error from the failed stage. |
-| vLLM import/API failure | Recreate the pinned Python 3.11 environment, apply the supplied constraints, and run `python -m pip check`. |
-| GPU OOM or host allocation failure | Check other processes, free GPU/host memory, checkpoint precision, and computed resident capacity. Smaller batches/contexts are useful diagnostics but change the experiment. |
+| Checkpoint download returns 401/403 | Confirm the model ID and upstream access approval, then authenticate locally with `hf auth login`. Keep access tokens out of commands and reports. |
+| `nvcc` missing or extension compilation fails | Check CUDA 12.8, the C++17 compiler, and `TORCH_EXTENSIONS_DIR`. Lower `MAX_JOBS` if compilation exhausts host memory; retain the compiler error for diagnosis. |
+| vLLM import/API failure | Recreate the pinned Python environment with the setup script, then run `python -m pip check`. |
+| GPU OOM or host allocation failure | Check competing processes, free GPU/host memory, checkpoint precision, and resident capacity. Smaller batches/contexts can help diagnosis; record the changed settings. |
 | Missing LongBench task or NIAH filler | Point `JETFIRE_LONGBENCH_DATA_DIR` at the directory directly containing the ten original `task.jsonl` files. |
-| An output directory already exists | Choose a fresh directory for an independent run. The artifact wrapper rejects reuse; lower-level accuracy tools support explicit protocol-checked resume. |
+| An output directory already exists | Choose a new directory for an independent run. The configurable benchmark and lower-level accuracy tools support explicit resume with matching inputs and protocol. |
 | Slow runs or timing variation | Check GPU ownership, CPU affinity/NUMA, worker count, throttling and competing DRAM traffic. Compare unprofiled trials with the same admission and client policy. |
-| Stream decoding/request failure | Inspect the actual client/server failure and recorded decoder identity; retain it as a failed trial rather than dropping it from a median. |
+| Stream decoding/request failure | Inspect client/server errors and the recorded decoder identity. Retain the failed trial and resolve the failure before reporting a complete benchmark. |
 
-Use `--help` on each entry point for its supported options. Rebuild extensions
-when changing CUDA/compiler/runtime versions. Keep each run's generated records
-in the chosen working area; they are reviewer outputs and are not part of the source release.
+Please use `--help` on each entry point for available options. Rebuild
+extensions after changing CUDA, compiler, or runtime versions, and keep
+generated records in the chosen working directory.
 
